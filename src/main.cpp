@@ -61,9 +61,10 @@ void parse_rfid_stream() {
         isReadingPkt = false;
         continue;
       }
-      
+      Serial.println("stop");
       // Если поймали стоповый байт
       if (b == 0x7E) {
+        Serial.println("stop22222");
         isReadingPkt = false;
         process_packet(pktBuffer, pktIndex);
       }
