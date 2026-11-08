@@ -26,7 +26,7 @@ void setup() {
   Serial.begin(115200);
   while (!Serial);
   
-  Serial2.begin(38400, SERIAL_8N1, RXD2, TXD2);
+  Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2);
   delay(500); // Даем UART стабилизироваться
   
   Serial.println("--- UHF RFID YRM1002: Multiple Inventory ---");
