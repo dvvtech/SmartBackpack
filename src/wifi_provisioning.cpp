@@ -9,7 +9,7 @@ namespace {
 constexpr char WIFI_CONFIG_NAMESPACE[] = "wifi-config";
 constexpr char WIFI_SSID_KEY[] = "ssid";
 constexpr char WIFI_PASSWORD_KEY[] = "password";
-constexpr char SETUP_AP_SSID[] = "SmartBackpack-Setup";
+constexpr char SETUP_AP_SSID[] = "ScanBox-Setup";
 constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
 
 WebServer provisioningServer(80);
@@ -56,6 +56,9 @@ void handleSaveWiFi() {
     return;
   }
 
+  Serial.printf("Wi-Fi SSID: %s\n", ssid.c_str());
+  Serial.printf("Wi-Fi password: %s\n", password.c_str());
+
   Preferences preferences;
   if (!preferences.begin(WIFI_CONFIG_NAMESPACE, false)) {
     provisioningServer.send(500, "text/plain; charset=utf-8",
@@ -77,6 +80,12 @@ bool connectToSavedWiFi() {
   if (!preferences.begin(WIFI_CONFIG_NAMESPACE, true)) {
     return false;
   }
+
+  if (!preferences.isKey(WIFI_SSID_KEY) || !preferences.isKey(WIFI_PASSWORD_KEY)) {
+    preferences.end();
+    return false;
+  }
+
   const String ssid = preferences.getString(WIFI_SSID_KEY, "");
   const String password = preferences.getString(WIFI_PASSWORD_KEY, "");
   preferences.end();
