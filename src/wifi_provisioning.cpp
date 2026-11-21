@@ -14,9 +14,15 @@ constexpr char WIFI_PASSWORD_KEY[] = "password";
 constexpr char WIFI_PAIRING_TOKEN_KEY[] = "pairing-token";
 constexpr char SETUP_AP_SSID[] = "ScanBox-Setup";
 constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
+constexpr int BOOT_BUTTON_PIN = 0;
+constexpr unsigned long PAIRING_RECOVERY_HOLD_MS = 3000;
+constexpr unsigned long PAIRING_RECOVERY_TIMEOUT_MS = 10UL * 60UL * 1000UL;
 
 WebServer provisioningServer(80);
 bool provisioningMode = false;
+bool provisioningServerStarted = false;
+bool pairingRecoveryMode = false;
+unsigned long pairingRecoveryStartedAt = 0;
 
 const char* httpMethodName(HTTPMethod method) {
   switch (method) {
@@ -40,6 +46,28 @@ void handleNotFound() {
   Serial.printf("[HTTP] Unmatched request: %s %s\n",
                 httpMethodName(provisioningServer.method()), provisioningServer.uri().c_str());
   handleProvisioningRoot();
+}
+
+void handlePairingRecoveryRoot() {
+  Serial.printf("[HTTP] %s %s -> pairing recovery page\n",
+                httpMethodName(provisioningServer.method()), provisioningServer.uri().c_str());
+
+  String macAddress = WiFi.macAddress();
+  macAddress.replace(":", "%3A");
+  const String pairingToken = wifiProvisioningPairingToken();
+  const String scanboxLink = "https://scanbox.tech/?mac=" + macAddress + "#token=" + pairingToken;
+
+  String page =
+      "<!doctype html><html lang=\"ru\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Восстановление ScanBox</title>"
+      "<style>body{font:16px system-ui,sans-serif;max-width:480px;margin:10vh auto;padding:0 20px;color:#17202a}a{display:inline-block;margin:12px 0;padding:12px 18px;border-radius:6px;background:#1769aa;color:white;text-decoration:none;word-break:break-all}code{word-break:break-all}</style>"
+      "<body><h1>Данные ScanBox</h1><p>MAC-адрес: <code>";
+  page += WiFi.macAddress();
+  page += "</code></p><p>Код сопряжения: <strong>";
+  page += pairingToken;
+  page += "</strong></p><p>Переключите телефон с ScanBox-Setup на Wi-Fi сеть с доступом в интернет, затем откройте ссылку:</p><p><a href=\"";
+  page += scanboxLink;
+  page += "\">Открыть ScanBox и восстановить профиль</a></p><p>Эта точка настройки автоматически отключится через 10 минут.</p></body></html>";
+  provisioningServer.send(200, "text/html; charset=utf-8", page);
 }
 
 bool connectToWiFi(const String& ssid, const String& password) {
@@ -158,11 +186,46 @@ void startWiFiProvisioning() {
   provisioningServer.on("/favicon.ico", HTTP_GET, []() { provisioningServer.send(204); });
   provisioningServer.onNotFound(handleNotFound);
   provisioningServer.begin();
+  provisioningServerStarted = true;
 
   Serial.print("Режим настройки Wi-Fi. Подключитесь к сети ");
   Serial.println(SETUP_AP_SSID);
   Serial.print("Откройте в браузере: http://");
   Serial.println(WiFi.softAPIP());
+}
+
+void startPairingRecovery() {
+  Serial.println("[WiFi] Starting temporary pairing recovery access point.");
+  WiFi.mode(WIFI_AP_STA);
+  if (!WiFi.softAP(SETUP_AP_SSID)) {
+    Serial.println("[WiFi] Could not start pairing recovery access point.");
+    WiFi.mode(WIFI_STA);
+    return;
+  }
+
+  if (!provisioningServerStarted) {
+    provisioningServer.on("/", HTTP_GET, handlePairingRecoveryRoot);
+    provisioningServer.on("/favicon.ico", HTTP_GET, []() { provisioningServer.send(204); });
+    provisioningServer.onNotFound(handlePairingRecoveryRoot);
+    provisioningServer.begin();
+    provisioningServerStarted = true;
+  }
+
+  pairingRecoveryMode = true;
+  pairingRecoveryStartedAt = millis();
+  Serial.print("[WiFi] Recovery AP: ");
+  Serial.println(SETUP_AP_SSID);
+  Serial.print("[WiFi] Open http://");
+  Serial.println(WiFi.softAPIP());
+}
+
+void stopPairingRecovery() {
+  provisioningServer.stop();
+  provisioningServerStarted = false;
+  WiFi.softAPdisconnect(false);
+  WiFi.mode(WIFI_STA);
+  pairingRecoveryMode = false;
+  Serial.println("[WiFi] Pairing recovery access point disabled.");
 }
 }  // namespace
 
@@ -192,13 +255,39 @@ String wifiProvisioningPairingToken() {
 }
 
 void wifiProvisioningBegin() {
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+  Serial.println("Удерживайте BOOT 3 секунды, чтобы восстановить MAC и код сопряжения.");
   if (!connectToSavedWiFi()) {
     startWiFiProvisioning();
   }
 }
 
 void wifiProvisioningLoop() {
-  if (provisioningMode) {
+  if (!provisioningMode && !pairingRecoveryMode && WiFi.status() == WL_CONNECTED) {
+    static bool bootButtonPressed = false;
+    static bool recoveryTriggered = false;
+    static unsigned long bootButtonPressedAt = 0;
+
+    if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
+      if (!bootButtonPressed) {
+        bootButtonPressed = true;
+        recoveryTriggered = false;
+        bootButtonPressedAt = millis();
+      } else if (!recoveryTriggered && millis() - bootButtonPressedAt >= PAIRING_RECOVERY_HOLD_MS) {
+        recoveryTriggered = true;
+        startPairingRecovery();
+      }
+    } else {
+      bootButtonPressed = false;
+      recoveryTriggered = false;
+    }
+  }
+
+  if (provisioningMode || pairingRecoveryMode) {
     provisioningServer.handleClient();
+  }
+
+  if (pairingRecoveryMode && millis() - pairingRecoveryStartedAt >= PAIRING_RECOVERY_TIMEOUT_MS) {
+    stopPairingRecovery();
   }
 }
