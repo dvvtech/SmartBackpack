@@ -46,6 +46,18 @@ void handleProvisioningRoot() {
   provisioningServer.send(200, "text/html; charset=utf-8", PROVISIONING_PAGE);
 }
 
+bool connectToWiFi(const String& ssid, const String& password) {
+  WiFi.mode(provisioningMode ? WIFI_AP_STA : WIFI_STA);
+  WiFi.begin(ssid.c_str(), password.c_str());
+
+  const unsigned long startedAt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startedAt < WIFI_CONNECT_TIMEOUT_MS) {
+    delay(250);
+  }
+
+  return WiFi.status() == WL_CONNECTED;
+}
+
 void handleSaveWiFi() {
   const String ssid = provisioningServer.arg("ssid");
   const String password = provisioningServer.arg("password");
@@ -57,7 +69,13 @@ void handleSaveWiFi() {
   }
 
   Serial.printf("Wi-Fi SSID: %s\n", ssid.c_str());
-  Serial.printf("Wi-Fi password: %s\n", password.c_str());
+
+  if (!connectToWiFi(ssid, password)) {
+    WiFi.disconnect(false);
+    provisioningServer.send(200, "text/html; charset=utf-8",
+        "<!doctype html><html lang=\"ru\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Ошибка подключения</title><body><h1>Не удалось подключиться к Wi-Fi</h1><p>Проверьте имя сети и пароль и попробуйте снова.</p><p><a href=\"/\">Вернуться к настройке</a></p></body></html>");
+    return;
+  }
 
   Preferences preferences;
   if (!preferences.begin(WIFI_CONFIG_NAMESPACE, false)) {
@@ -69,10 +87,10 @@ void handleSaveWiFi() {
   preferences.putString(WIFI_PASSWORD_KEY, password);
   preferences.end();
 
-  provisioningServer.send(200, "text/html; charset=utf-8",
-      "<!doctype html><html lang=\"ru\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Настройки сохранены</title><body><h1>Настройки сохранены</h1><p>Устройство перезагрузится и подключится к указанной сети.</p></body></html>");
-  delay(1200);
-  ESP.restart();
+  String redirectUrl = "https://scanbox.tech/?mac=" + WiFi.macAddress();
+  redirectUrl.replace(":", "%3A");
+  provisioningServer.sendHeader("Location", redirectUrl, true);
+  provisioningServer.send(302, "text/plain; charset=utf-8", "Перенаправление на ScanBox...");
 }
 
 bool connectToSavedWiFi() {
@@ -96,15 +114,8 @@ bool connectToSavedWiFi() {
 
   Serial.print("Подключение к Wi-Fi: ");
   Serial.println(ssid);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid.c_str(), password.c_str());
 
-  const unsigned long startedAt = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startedAt < WIFI_CONNECT_TIMEOUT_MS) {
-    delay(250);
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
+  if (connectToWiFi(ssid, password)) {
     Serial.print("Wi-Fi подключен, IP: ");
     Serial.println(WiFi.localIP());
     return true;
