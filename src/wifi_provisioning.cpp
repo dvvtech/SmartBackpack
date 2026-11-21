@@ -16,11 +16,32 @@ constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
 WebServer provisioningServer(80);
 bool provisioningMode = false;
 
+const char* httpMethodName(HTTPMethod method) {
+  switch (method) {
+    case HTTP_GET: return "GET";
+    case HTTP_POST: return "POST";
+    case HTTP_PUT: return "PUT";
+    case HTTP_DELETE: return "DELETE";
+    case HTTP_OPTIONS: return "OPTIONS";
+    case HTTP_HEAD: return "HEAD";
+    default: return "OTHER";
+  }
+}
+
 void handleProvisioningRoot() {
+  Serial.printf("[HTTP] %s %s -> provisioning page\n",
+                httpMethodName(provisioningServer.method()), provisioningServer.uri().c_str());
   provisioningServer.send(200, "text/html; charset=utf-8", PROVISIONING_PAGE);
 }
 
+void handleNotFound() {
+  Serial.printf("[HTTP] Unmatched request: %s %s\n",
+                httpMethodName(provisioningServer.method()), provisioningServer.uri().c_str());
+  handleProvisioningRoot();
+}
+
 bool connectToWiFi(const String& ssid, const String& password) {
+  Serial.printf("[WiFi] Connecting to SSID: %s\n", ssid.c_str());
   WiFi.mode(provisioningMode ? WIFI_AP_STA : WIFI_STA);
   WiFi.begin(ssid.c_str(), password.c_str());
 
@@ -29,10 +50,16 @@ bool connectToWiFi(const String& ssid, const String& password) {
     delay(250);
   }
 
-  return WiFi.status() == WL_CONNECTED;
+  const bool connected = WiFi.status() == WL_CONNECTED;
+  Serial.printf("[WiFi] %s; status=%d; IP=%s\n",
+                connected ? "Connected" : "Connection failed",
+                static_cast<int>(WiFi.status()), WiFi.localIP().toString().c_str());
+  return connected;
 }
 
 void handleSaveWiFi() {
+  Serial.printf("[HTTP] %s %s -> save Wi-Fi settings\n",
+                httpMethodName(provisioningServer.method()), provisioningServer.uri().c_str());
   const String ssid = provisioningServer.arg("ssid");
   const String password = provisioningServer.arg("password");
 
@@ -61,8 +88,10 @@ void handleSaveWiFi() {
   preferences.putString(WIFI_PASSWORD_KEY, password);
   preferences.end();
 
-  String redirectUrl = "https://scanbox.tech/?mac=" + WiFi.macAddress();
-  redirectUrl.replace(":", "%3A");
+  String macAddress = WiFi.macAddress();
+  macAddress.replace(":", "%3A");
+  const String redirectUrl = "https://scanbox.tech/?mac=" + macAddress;
+  Serial.printf("[HTTP] Sending redirect: %s\n", redirectUrl.c_str());
   provisioningServer.sendHeader("Location", redirectUrl, true);
   provisioningServer.send(302, "text/plain; charset=utf-8", "Перенаправление на ScanBox...");
 }
@@ -110,7 +139,8 @@ void startWiFiProvisioning() {
   provisioningMode = true;
   provisioningServer.on("/", HTTP_GET, handleProvisioningRoot);
   provisioningServer.on("/save", HTTP_POST, handleSaveWiFi);
-  provisioningServer.onNotFound(handleProvisioningRoot);
+  provisioningServer.on("/favicon.ico", HTTP_GET, []() { provisioningServer.send(204); });
+  provisioningServer.onNotFound(handleNotFound);
   provisioningServer.begin();
 
   Serial.print("Режим настройки Wi-Fi. Подключитесь к сети ");
