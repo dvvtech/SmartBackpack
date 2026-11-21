@@ -4,12 +4,14 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_system.h>
 #include "provisioning_page.h"
 
 namespace {
 constexpr char WIFI_CONFIG_NAMESPACE[] = "wifi-config";
 constexpr char WIFI_SSID_KEY[] = "ssid";
 constexpr char WIFI_PASSWORD_KEY[] = "password";
+constexpr char WIFI_PAIRING_TOKEN_KEY[] = "pairing-token";
 constexpr char SETUP_AP_SSID[] = "ScanBox-Setup";
 constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
 
@@ -88,18 +90,21 @@ void handleSaveWiFi() {
   preferences.putString(WIFI_PASSWORD_KEY, password);
   preferences.end();
 
+  const String pairingToken = wifiProvisioningPairingToken();
+
   String macAddress = WiFi.macAddress();
   macAddress.replace(":", "%3A");
   const String redirectUrl = "https://scanbox.tech/?mac=" + macAddress;
+  const String setupLink = redirectUrl + "#token=" + pairingToken;
   Serial.printf("[HTTP] Showing manual ScanBox link: %s\n", redirectUrl.c_str());
 
   String successPage =
       "<!doctype html><html lang=\"ru\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Wi-Fi подключен</title>"
       "<style>body{font:16px system-ui,sans-serif;max-width:480px;margin:10vh auto;padding:0 20px;color:#17202a}a{display:inline-block;margin:12px 0;padding:12px 18px;border-radius:6px;background:#1769aa;color:white;text-decoration:none;word-break:break-all}code{word-break:break-all}</style>"
       "<body><h1>Wi-Fi подключен</h1><p>Устройство подключилось к сети. Теперь вручную переключите телефон с ScanBox-Setup на Wi-Fi сеть с доступом в интернет, затем вернитесь на эту страницу и нажмите ссылку:</p><p><a href=\"";
-  successPage += redirectUrl;
+  successPage += setupLink;
   successPage += "\">Открыть ScanBox</a></p><p>Если страница закроется, откройте ссылку вручную:</p><code>";
-  successPage += redirectUrl;
+  successPage += setupLink;
   successPage += "</code></body></html>";
   provisioningServer.send(200, "text/html; charset=utf-8", successPage);
   Serial.println("[WiFi] Setup AP remains active for the phone to switch networks.");
@@ -158,6 +163,29 @@ void startWiFiProvisioning() {
   Serial.println(WiFi.softAPIP());
 }
 }  // namespace
+
+String wifiProvisioningPairingToken() {
+  Preferences preferences;
+  if (!preferences.begin(WIFI_CONFIG_NAMESPACE, false)) {
+    return "";
+  }
+
+  String token = preferences.getString(WIFI_PAIRING_TOKEN_KEY, "");
+  if (token.length() == 0) {
+    char tokenBuffer[33];
+    for (size_t i = 0; i < 4; ++i) {
+      const uint32_t randomPart = esp_random();
+      snprintf(tokenBuffer + i * 8, sizeof(tokenBuffer) - i * 8, "%08lX",
+               static_cast<unsigned long>(randomPart));
+    }
+    token = tokenBuffer;
+    preferences.putString(WIFI_PAIRING_TOKEN_KEY, token);
+    Serial.printf("[WS] New pairing code (enter in ScanBox profile): %s\n", token.c_str());
+  }
+
+  preferences.end();
+  return token;
+}
 
 void wifiProvisioningBegin() {
   if (!connectToSavedWiFi()) {

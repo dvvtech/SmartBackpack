@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include "device_websocket.h"
 #include "rfid_scanner.h"
 #include "wifi_provisioning.h"
 
@@ -16,5 +17,6 @@ void setup() {
 
 void loop() {
   wifiProvisioningLoop();
+  deviceWebSocketLoop();
   //rfidScannerLoop();
 }
