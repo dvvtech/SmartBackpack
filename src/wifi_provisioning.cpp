@@ -91,9 +91,18 @@ void handleSaveWiFi() {
   String macAddress = WiFi.macAddress();
   macAddress.replace(":", "%3A");
   const String redirectUrl = "https://scanbox.tech/?mac=" + macAddress;
-  Serial.printf("[HTTP] Sending redirect: %s\n", redirectUrl.c_str());
-  provisioningServer.sendHeader("Location", redirectUrl, true);
-  provisioningServer.send(302, "text/plain; charset=utf-8", "Перенаправление на ScanBox...");
+  Serial.printf("[HTTP] Showing manual ScanBox link: %s\n", redirectUrl.c_str());
+
+  String successPage =
+      "<!doctype html><html lang=\"ru\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Wi-Fi подключен</title>"
+      "<style>body{font:16px system-ui,sans-serif;max-width:480px;margin:10vh auto;padding:0 20px;color:#17202a}a{display:inline-block;margin:12px 0;padding:12px 18px;border-radius:6px;background:#1769aa;color:white;text-decoration:none;word-break:break-all}code{word-break:break-all}</style>"
+      "<body><h1>Wi-Fi подключен</h1><p>Устройство подключилось к сети. Теперь вручную переключите телефон с ScanBox-Setup на Wi-Fi сеть с доступом в интернет, затем вернитесь на эту страницу и нажмите ссылку:</p><p><a href=\"";
+  successPage += redirectUrl;
+  successPage += "\">Открыть ScanBox</a></p><p>Если страница закроется, откройте ссылку вручную:</p><code>";
+  successPage += redirectUrl;
+  successPage += "</code></body></html>";
+  provisioningServer.send(200, "text/html; charset=utf-8", successPage);
+  Serial.println("[WiFi] Setup AP remains active for the phone to switch networks.");
 }
 
 bool connectToSavedWiFi() {
