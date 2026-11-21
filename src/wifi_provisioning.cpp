@@ -101,7 +101,9 @@ void handleSaveWiFi() {
   String successPage =
       "<!doctype html><html lang=\"ru\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Wi-Fi подключен</title>"
       "<style>body{font:16px system-ui,sans-serif;max-width:480px;margin:10vh auto;padding:0 20px;color:#17202a}a{display:inline-block;margin:12px 0;padding:12px 18px;border-radius:6px;background:#1769aa;color:white;text-decoration:none;word-break:break-all}code{word-break:break-all}</style>"
-      "<body><h1>Wi-Fi подключен</h1><p>Устройство подключилось к сети. Теперь вручную переключите телефон с ScanBox-Setup на Wi-Fi сеть с доступом в интернет, затем вернитесь на эту страницу и нажмите ссылку:</p><p><a href=\"";
+      "<body><h1>Wi-Fi подключен</h1><p>Устройство подключилось к сети. Теперь вручную переключите телефон с ScanBox-Setup на Wi-Fi сеть с доступом в интернет, затем вернитесь на эту страницу и нажмите ссылку:</p><p>Код сопряжения: <strong>";
+  successPage += pairingToken;
+  successPage += "</strong></p><p><a href=\"";
   successPage += setupLink;
   successPage += "\">Открыть ScanBox</a></p><p>Если страница закроется, откройте ссылку вручную:</p><code>";
   successPage += setupLink;
@@ -171,13 +173,15 @@ String wifiProvisioningPairingToken() {
   }
 
   String token = preferences.getString(WIFI_PAIRING_TOKEN_KEY, "");
-  if (token.length() == 0) {
-    char tokenBuffer[33];
-    for (size_t i = 0; i < 4; ++i) {
-      const uint32_t randomPart = esp_random();
-      snprintf(tokenBuffer + i * 8, sizeof(tokenBuffer) - i * 8, "%08lX",
-               static_cast<unsigned long>(randomPart));
-    }
+  bool tokenIsValid = token.length() == 5;
+  for (size_t i = 0; tokenIsValid && i < token.length(); ++i) {
+    tokenIsValid = isDigit(token[i]);
+  }
+
+  if (!tokenIsValid) {
+    char tokenBuffer[6];
+    snprintf(tokenBuffer, sizeof(tokenBuffer), "%05u",
+             static_cast<unsigned int>(esp_random() % 100000));
     token = tokenBuffer;
     preferences.putString(WIFI_PAIRING_TOKEN_KEY, token);
     Serial.printf("[WS] New pairing code (enter in ScanBox profile): %s\n", token.c_str());
