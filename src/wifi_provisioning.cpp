@@ -24,6 +24,7 @@ const char PROVISIONING_PAGE[] PROGMEM = R"rawliteral(
   <title>Настройка SmartBackpack</title>
   <style>
     body{font:16px system-ui,sans-serif;max-width:480px;margin:10vh auto;padding:0 20px;color:#17202a}
+    .wifi-note{display:block;margin-top:6px;color:#687780;font-size:12px}
     label{display:block;margin:18px 0 6px}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #aab7b8;border-radius:6px;font:inherit}
     button{margin-top:22px;padding:12px 18px;border:0;border-radius:6px;background:#1769aa;color:white;font:inherit;cursor:pointer}
     .password-field{position:relative}.password-field input{padding-right:48px}
@@ -38,6 +39,7 @@ const char PROVISIONING_PAGE[] PROGMEM = R"rawliteral(
 <body>
   <h1>Настройка Wi-Fi</h1>
   <p>Укажите сеть, к которой должно подключаться устройство.</p>
+  <small class="wifi-note">Поддерживаются только сети Wi-Fi 2,4 ГГц.</small>
   <form id="wifi-form" method="post" action="/save">
     <label for="ssid">Имя сети (SSID)</label>
     <input id="ssid" name="ssid" maxlength="32" required autocomplete="off">
