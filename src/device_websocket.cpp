@@ -172,6 +172,14 @@ void onWebSocketEvent(WStype_t eventType, uint8_t* payload, size_t length) {
         activeScheduleScan = true;
         activeTagScanSubjectId = 0;
         Serial.println("[WS] Starting a 5-second RFID scan for the schedule.");
+      } else if (message.indexOf("\"type\":\"resetWifi\"") >= 0) {
+        if (!wifiProvisioningClearSavedCredentials()) {
+          webSocket.sendTXT("{\"type\":\"wifiResetFailed\",\"message\":\"Не удалось удалить сохранённые данные Wi-Fi.\"}");
+          break;
+        }
+        webSocket.sendTXT("{\"type\":\"wifiResetStarted\"}");
+        wifiProvisioningRequestSetup();
+        Serial.println("[WS] Wi-Fi reset requested by the user.");
       } else if (message.indexOf("\"type\":\"deleteTagMapping\"") >= 0) {
         uint16_t subjectId = 0;
         if (!readSubjectId(message, subjectId)) {

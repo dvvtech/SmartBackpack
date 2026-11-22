@@ -23,6 +23,7 @@ bool provisioningMode = false;
 bool provisioningServerStarted = false;
 bool pairingRecoveryMode = false;
 unsigned long pairingRecoveryStartedAt = 0;
+bool setupStartRequested = false;
 
 const char* httpMethodName(HTTPMethod method) {
   switch (method) {
@@ -229,6 +230,26 @@ void stopPairingRecovery() {
 }
 }  // namespace
 
+bool wifiProvisioningClearSavedCredentials() {
+  Preferences preferences;
+  if (!preferences.begin(WIFI_CONFIG_NAMESPACE, false)) {
+    Serial.println("[WiFi] Could not open saved Wi-Fi settings for reset.");
+    return false;
+  }
+
+  const bool ssidRemoved = preferences.remove(WIFI_SSID_KEY);
+  const bool passwordRemoved = preferences.remove(WIFI_PASSWORD_KEY);
+  preferences.end();
+  Serial.printf("[WiFi] Saved credentials cleared; SSID=%s, password=%s\n",
+                ssidRemoved ? "removed" : "not found",
+                passwordRemoved ? "removed" : "not found");
+  return true;
+}
+
+void wifiProvisioningRequestSetup() {
+  setupStartRequested = true;
+}
+
 String wifiProvisioningPairingToken() {
   Preferences preferences;
   if (!preferences.begin(WIFI_CONFIG_NAMESPACE, false)) {
@@ -263,6 +284,21 @@ void wifiProvisioningBegin() {
 }
 
 void wifiProvisioningLoop() {
+  if (setupStartRequested) {
+    setupStartRequested = false;
+    if (provisioningServerStarted) {
+      provisioningServer.stop();
+      provisioningServerStarted = false;
+    }
+    pairingRecoveryMode = false;
+    provisioningMode = false;
+    WiFi.disconnect(true);
+    delay(100);
+    startWiFiProvisioning();
+    Serial.println("[WiFi] Credentials reset requested remotely; setup AP is active.");
+    return;
+  }
+
   if (!provisioningMode && !pairingRecoveryMode && WiFi.status() == WL_CONNECTED) {
     static bool bootButtonPressed = false;
     static bool recoveryTriggered = false;
