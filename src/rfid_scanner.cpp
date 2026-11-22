@@ -7,6 +7,7 @@ namespace {
 constexpr int RXD2 = 16;
 constexpr int TXD2 = 17;
 constexpr int MAX_PKT_LEN = 64;
+constexpr size_t MAX_CAPTURED_RFID_TAGS = 64;
 
 // Multiple Inventory: максимум 65535 циклов; опрос можно остановить командой 0x28.
 const byte CMD_START_INVENTORY[] = {0xBB, 0x00, 0x27, 0x00, 0x03, 0x22, 0xFF, 0xFF, 0x4A, 0x7E};
@@ -69,7 +70,7 @@ void processPacket(const byte* pkt, int len) {
 
     if (timedScanActive) {
       const String tag = bytesToHex(pkt + epcStartIndex, epcLength);
-      if (timedScanTags.size() < 2
+      if (timedScanTags.size() < MAX_CAPTURED_RFID_TAGS
           && std::find(timedScanTags.begin(), timedScanTags.end(), tag) == timedScanTags.end()) {
         timedScanTags.push_back(tag);
       }

@@ -49,6 +49,7 @@ const char ISRG_ROOT_X1_CA[] PROGMEM =
 WebSocketsClient webSocket;
 bool webSocketStarted = false;
 uint16_t activeTagScanSubjectId = 0;
+bool activeScheduleScan = false;
 uint16_t candidateTagSubjectId = 0;
 String candidateRfidTag;
 
@@ -127,6 +128,19 @@ void sendTagScanResult(const RfidTimedScanResult& result) {
                 subjectId, static_cast<unsigned>(result.tags.size()));
 }
 
+void sendScheduleScanResult(const RfidTimedScanResult& result) {
+  activeScheduleScan = false;
+  String response = "{\"type\":\"scheduleScanResult\",\"success\":true,\"tags\":[";
+  for (size_t i = 0; i < result.tags.size(); ++i) {
+    if (i != 0) response += ",";
+    response += "\"" + result.tags[i] + "\"";
+  }
+  response += "]}";
+  webSocket.sendTXT(response);
+  Serial.printf("[WS] 5-second schedule scan finished; unique tags=%u\n",
+                static_cast<unsigned>(result.tags.size()));
+}
+
 void onWebSocketEvent(WStype_t eventType, uint8_t* payload, size_t length) {
   switch (eventType) {
     case WStype_CONNECTED:
@@ -150,6 +164,14 @@ void onWebSocketEvent(WStype_t eventType, uint8_t* payload, size_t length) {
       if (message.indexOf("\"type\":\"scan\"") >= 0) {
         Serial.printf("[WS] Scan request received: %s\n", message.c_str());
         webSocket.sendTXT("{\"type\":\"scanReceived\"}");
+      } else if (message.indexOf("\"type\":\"scanSchedule\"") >= 0) {
+        if (!rfidScannerStartTimedScan(5000)) {
+          webSocket.sendTXT("{\"type\":\"scheduleScanResult\",\"success\":false,\"message\":\"Сканирование уже выполняется.\"}");
+          break;
+        }
+        activeScheduleScan = true;
+        activeTagScanSubjectId = 0;
+        Serial.println("[WS] Starting a 5-second RFID scan for the schedule.");
       } else if (message.indexOf("\"type\":\"deleteTagMapping\"") >= 0) {
         uint16_t subjectId = 0;
         if (!readSubjectId(message, subjectId)) {
@@ -177,6 +199,7 @@ void onWebSocketEvent(WStype_t eventType, uint8_t* payload, size_t length) {
         }
         candidateTagSubjectId = 0;
         candidateRfidTag = "";
+        activeScheduleScan = false;
         activeTagScanSubjectId = subjectId;
         Serial.printf("[WS] Starting a 2-second RFID scan for subject %u.\n", subjectId);
       } else if (message.indexOf("\"type\":\"confirmTagMapping\"") >= 0) {
@@ -237,7 +260,10 @@ void deviceWebSocketLoop() {
   }
 
   webSocket.loop();
-  if (activeTagScanSubjectId != 0) {
+  if (activeScheduleScan) {
+    const RfidTimedScanResult result = rfidScannerTakeTimedScanResult();
+    if (result.ready) sendScheduleScanResult(result);
+  } else if (activeTagScanSubjectId != 0) {
     const RfidTimedScanResult result = rfidScannerTakeTimedScanResult();
     if (result.ready) sendTagScanResult(result);
   }
