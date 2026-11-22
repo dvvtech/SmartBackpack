@@ -9,10 +9,16 @@ void setup() {
   Serial.println("--- UHF RFID YRM1002: Multiple Inventory ---");
 
   rfidScannerBegin();
+  // Временный режим отладки RFID. Отключите, установив false, после проверки меток.
+  constexpr bool RFID_CONTINUOUS_DEBUG_MODE = false;
+  if (RFID_CONTINUOUS_DEBUG_MODE) {
+    rfidScannerStartContinuousInventory();
+  } else {
+    Serial.println("[RFID] Debug inventory disabled; stopping any previous inventory.");
+    rfidScannerStopInventory();
+  }
   wifiProvisioningBegin();
 
-  // Запуск инвентаризации пока отключен.
-  // rfidScannerStartInventory();
 }
 
 void loop() {

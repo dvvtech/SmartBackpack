@@ -11,6 +11,7 @@ struct RfidTimedScanResult {
 void rfidScannerBegin();
 void rfidScannerLoop();
 void rfidScannerStartInventory();
+void rfidScannerStartContinuousInventory();
 void rfidScannerStopInventory();
 bool rfidScannerStartTimedScan(uint32_t durationMs);
 RfidTimedScanResult rfidScannerTakeTimedScanResult();

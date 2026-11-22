@@ -17,9 +17,11 @@ int pktIndex = 0;
 bool isReadingPkt = false;
 bool timedScanActive = false;
 bool timedScanComplete = false;
+bool continuousInventoryActive = false;
 unsigned long timedScanStartedAt = 0;
 uint32_t timedScanDurationMs = 0;
 std::vector<String> timedScanTags;
+unsigned long lastNoTagLogAt = 0;
 
 String bytesToHex(const byte* bytes, int length) {
   String tag;
@@ -74,6 +76,8 @@ void processPacket(const byte* pkt, int len) {
     }
   } else if (frameType == 0x01 && command == 0xFF && dataLen >= 1) {
     // Документированный ответ об ошибке инвентаризации, например 0x15.
+    if (pkt[5] == 0x15 && millis() - lastNoTagLogAt < 1000) return;
+    if (pkt[5] == 0x15) lastNoTagLogAt = millis();
     Serial.print("Ошибка RFID-команды, код: 0x");
     if (pkt[5] < 0x10) Serial.print("0");
     Serial.println(pkt[5], HEX);
@@ -114,7 +118,7 @@ void rfidScannerLoop() {
   }
 
   if (timedScanActive && millis() - timedScanStartedAt >= timedScanDurationMs) {
-    rfidScannerStopInventory();
+    if (!continuousInventoryActive) rfidScannerStopInventory();
     timedScanActive = false;
     timedScanComplete = true;
   }
@@ -123,6 +127,11 @@ void rfidScannerLoop() {
 void rfidScannerStartInventory() {
   Serial.println("Отправка команды многократного сканирования...");
   Serial2.write(CMD_START_INVENTORY, sizeof(CMD_START_INVENTORY));
+}
+
+void rfidScannerStartContinuousInventory() {
+  continuousInventoryActive = true;
+  rfidScannerStartInventory();
 }
 
 void rfidScannerStopInventory() {
@@ -136,7 +145,7 @@ bool rfidScannerStartTimedScan(uint32_t durationMs) {
   timedScanDurationMs = durationMs;
   timedScanStartedAt = millis();
   timedScanActive = true;
-  rfidScannerStartInventory();
+  if (!continuousInventoryActive) rfidScannerStartInventory();
   return true;
 }
 
