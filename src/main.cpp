@@ -17,6 +17,6 @@ void setup() {
 
 void loop() {
   wifiProvisioningLoop();
+  rfidScannerLoop();
   deviceWebSocketLoop();
-  //rfidScannerLoop();
 }

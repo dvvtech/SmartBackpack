@@ -1,6 +1,7 @@
 #include "rfid_scanner.h"
 
 #include <Arduino.h>
+#include <algorithm>
 
 namespace {
 constexpr int RXD2 = 16;
@@ -14,6 +15,22 @@ const byte CMD_STOP_INVENTORY[] = {0xBB, 0x00, 0x28, 0x00, 0x00, 0x28, 0x7E};
 byte pktBuffer[MAX_PKT_LEN];
 int pktIndex = 0;
 bool isReadingPkt = false;
+bool timedScanActive = false;
+bool timedScanComplete = false;
+unsigned long timedScanStartedAt = 0;
+uint32_t timedScanDurationMs = 0;
+std::vector<String> timedScanTags;
+
+String bytesToHex(const byte* bytes, int length) {
+  String tag;
+  tag.reserve(length * 2);
+  for (int i = 0; i < length; ++i) {
+    if (bytes[i] < 0x10) tag += '0';
+    tag += String(bytes[i], HEX);
+  }
+  tag.toUpperCase();
+  return tag;
+}
 
 void processPacket(const byte* pkt, int len) {
   // Минимальный кадр: Header(1), Type(1), Command(1), PL(2), Checksum(1), End(1).
@@ -47,6 +64,14 @@ void processPacket(const byte* pkt, int len) {
     Serial.print(" | RSSI: ");
     Serial.print(rssi);
     Serial.println(" dBm");
+
+    if (timedScanActive) {
+      const String tag = bytesToHex(pkt + epcStartIndex, epcLength);
+      if (timedScanTags.size() < 2
+          && std::find(timedScanTags.begin(), timedScanTags.end(), tag) == timedScanTags.end()) {
+        timedScanTags.push_back(tag);
+      }
+    }
   } else if (frameType == 0x01 && command == 0xFF && dataLen >= 1) {
     // Документированный ответ об ошибке инвентаризации, например 0x15.
     Serial.print("Ошибка RFID-команды, код: 0x");
@@ -87,6 +112,12 @@ void rfidScannerLoop() {
       processPacket(pktBuffer, pktIndex);
     }
   }
+
+  if (timedScanActive && millis() - timedScanStartedAt >= timedScanDurationMs) {
+    rfidScannerStopInventory();
+    timedScanActive = false;
+    timedScanComplete = true;
+  }
 }
 
 void rfidScannerStartInventory() {
@@ -96,4 +127,21 @@ void rfidScannerStartInventory() {
 
 void rfidScannerStopInventory() {
   Serial2.write(CMD_STOP_INVENTORY, sizeof(CMD_STOP_INVENTORY));
+}
+
+bool rfidScannerStartTimedScan(uint32_t durationMs) {
+  if (timedScanActive || durationMs == 0) return false;
+  timedScanTags.clear();
+  timedScanComplete = false;
+  timedScanDurationMs = durationMs;
+  timedScanStartedAt = millis();
+  timedScanActive = true;
+  rfidScannerStartInventory();
+  return true;
+}
+
+RfidTimedScanResult rfidScannerTakeTimedScanResult() {
+  if (!timedScanComplete) return {false, {}};
+  timedScanComplete = false;
+  return {true, timedScanTags};
 }

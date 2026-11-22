@@ -4,6 +4,8 @@
 #include <WiFi.h>
 #include <WebSocketsClient.h>
 
+#include "rfid_mappings.h"
+#include "rfid_scanner.h"
 #include "wifi_provisioning.h"
 
 namespace {
@@ -46,12 +48,92 @@ const char ISRG_ROOT_X1_CA[] PROGMEM =
 
 WebSocketsClient webSocket;
 bool webSocketStarted = false;
+uint16_t activeTagScanSubjectId = 0;
+uint16_t candidateTagSubjectId = 0;
+String candidateRfidTag;
+
+String buildTagMappingsMessage() {
+  const std::vector<RfidTagMapping> mappings = rfidMappingsList();
+  String message = "{\"type\":\"tagMappings\",\"mappings\":[";
+  for (size_t i = 0; i < mappings.size(); ++i) {
+    if (i != 0) message += ",";
+    message += "{\"subjectId\":" + String(mappings[i].subjectId) +
+        ",\"rfidTag\":\"" + mappings[i].rfidTag + "\"}";
+  }
+  message += "]}";
+  return message;
+}
+
+void sendTagMappings() {
+  String message = buildTagMappingsMessage();
+  webSocket.sendTXT(message);
+}
+
+bool readSubjectId(const String& message, uint16_t& subjectId) {
+  const int keyIndex = message.indexOf("\"subjectId\"");
+  if (keyIndex < 0) return false;
+  const int colonIndex = message.indexOf(':', keyIndex);
+  if (colonIndex < 0) return false;
+
+  int valueIndex = colonIndex + 1;
+  while (valueIndex < static_cast<int>(message.length()) && message[valueIndex] == ' ') ++valueIndex;
+  if (valueIndex >= static_cast<int>(message.length()) || !isDigit(message[valueIndex])) return false;
+
+  unsigned long parsed = 0;
+  while (valueIndex < static_cast<int>(message.length()) && isDigit(message[valueIndex])) {
+    parsed = parsed * 10 + static_cast<unsigned long>(message[valueIndex] - '0');
+    if (parsed > 65535) return false;
+    ++valueIndex;
+  }
+  if (parsed == 0) return false;
+  subjectId = static_cast<uint16_t>(parsed);
+  return true;
+}
+
+bool readJsonString(const String& message, const char* key, String& value) {
+  const String keyToken = String("\"") + key + "\"";
+  const int keyIndex = message.indexOf(keyToken);
+  if (keyIndex < 0) return false;
+  const int colonIndex = message.indexOf(':', keyIndex + keyToken.length());
+  if (colonIndex < 0) return false;
+
+  int valueIndex = colonIndex + 1;
+  while (valueIndex < static_cast<int>(message.length()) && message[valueIndex] == ' ') ++valueIndex;
+  if (valueIndex >= static_cast<int>(message.length()) || message[valueIndex] != '\"') return false;
+  const int valueStart = ++valueIndex;
+  while (valueIndex < static_cast<int>(message.length()) && message[valueIndex] != '\"') ++valueIndex;
+  if (valueIndex >= static_cast<int>(message.length())) return false;
+
+  value = message.substring(valueStart, valueIndex);
+  return true;
+}
+
+void sendTagScanResult(const RfidTimedScanResult& result) {
+  const uint16_t subjectId = activeTagScanSubjectId;
+  activeTagScanSubjectId = 0;
+
+  String response = "{\"type\":\"tagScanResult\",\"subjectId\":" + String(subjectId);
+  if (result.tags.size() == 1) {
+    candidateTagSubjectId = subjectId;
+    candidateRfidTag = result.tags[0];
+    response += ",\"success\":true,\"rfidTag\":\"" + candidateRfidTag + "\"}";
+  } else {
+    candidateTagSubjectId = 0;
+    candidateRfidTag = "";
+    response += ",\"success\":false,\"tagCount\":" + String(result.tags.size()) + "}";
+  }
+  webSocket.sendTXT(response);
+  Serial.printf("[WS] Timed RFID scan finished for subject %u; tags=%u\n",
+                subjectId, static_cast<unsigned>(result.tags.size()));
+}
 
 void onWebSocketEvent(WStype_t eventType, uint8_t* payload, size_t length) {
   switch (eventType) {
     case WStype_CONNECTED:
       Serial.printf("[WS] Connected to %s:%u\n", API_HOST, API_PORT);
       webSocket.sendTXT("{\"type\":\"deviceConnected\"}");
+      sendTagMappings();
+      Serial.println("[WS] RFID subject mappings sent to API.");
       break;
 
     case WStype_DISCONNECTED:
@@ -68,6 +150,50 @@ void onWebSocketEvent(WStype_t eventType, uint8_t* payload, size_t length) {
       if (message.indexOf("\"type\":\"scan\"") >= 0) {
         Serial.printf("[WS] Scan request received: %s\n", message.c_str());
         webSocket.sendTXT("{\"type\":\"scanReceived\"}");
+      } else if (message.indexOf("\"type\":\"deleteTagMapping\"") >= 0) {
+        uint16_t subjectId = 0;
+        if (!readSubjectId(message, subjectId)) {
+          webSocket.sendTXT("{\"type\":\"tagMappingDeleted\",\"success\":false,\"message\":\"Invalid subjectId\"}");
+          break;
+        }
+
+        const bool removed = rfidMappingRemove(subjectId);
+        String response = "{\"type\":\"tagMappingDeleted\",\"subjectId\":" + String(subjectId) +
+            ",\"success\":" + String(removed ? "true" : "false") + "}";
+        webSocket.sendTXT(response);
+        sendTagMappings();
+        Serial.printf("[WS] RFID mapping delete for subject %u: %s\n", subjectId, removed ? "removed" : "not found");
+      } else if (message.indexOf("\"type\":\"scanTag\"") >= 0) {
+        uint16_t subjectId = 0;
+        if (!readSubjectId(message, subjectId)) {
+          webSocket.sendTXT("{\"type\":\"tagScanResult\",\"success\":false,\"tagCount\":0,\"message\":\"Предмет не выбран.\"}");
+          break;
+        }
+        if (!rfidScannerStartTimedScan(2000)) {
+          String response = "{\"type\":\"tagScanResult\",\"subjectId\":" + String(subjectId) +
+              ",\"success\":false,\"tagCount\":0,\"message\":\"Сканирование уже выполняется.\"}";
+          webSocket.sendTXT(response);
+          break;
+        }
+        candidateTagSubjectId = 0;
+        candidateRfidTag = "";
+        activeTagScanSubjectId = subjectId;
+        Serial.printf("[WS] Starting a 2-second RFID scan for subject %u.\n", subjectId);
+      } else if (message.indexOf("\"type\":\"confirmTagMapping\"") >= 0) {
+        uint16_t subjectId = 0;
+        String rfidTag;
+        const bool parsed = readSubjectId(message, subjectId) && readJsonString(message, "rfidTag", rfidTag);
+        const bool isCandidate = parsed && subjectId == candidateTagSubjectId && rfidTag == candidateRfidTag;
+        const bool saved = isCandidate && rfidMappingSave(subjectId, rfidTag);
+        if (saved) {
+          candidateTagSubjectId = 0;
+          candidateRfidTag = "";
+        }
+        String response = "{\"type\":\"tagMappingSaved\",\"subjectId\":" + String(subjectId) +
+            ",\"success\":" + String(saved ? "true" : "false") + "}";
+        webSocket.sendTXT(response);
+        if (saved) sendTagMappings();
+        Serial.printf("[WS] RFID mapping save for subject %u: %s\n", subjectId, saved ? "saved" : "rejected");
       } else {
         Serial.printf("[WS] Message received: %s\n", message.c_str());
       }
@@ -111,4 +237,8 @@ void deviceWebSocketLoop() {
   }
 
   webSocket.loop();
+  if (activeTagScanSubjectId != 0) {
+    const RfidTimedScanResult result = rfidScannerTakeTimedScanResult();
+    if (result.ready) sendTagScanResult(result);
+  }
 }
