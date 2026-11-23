@@ -88,6 +88,7 @@ void processPacket(const byte* pkt, int len) {
 
 void rfidScannerBegin() {
   // Serial2 — UART2 с RX и TX.
+  Serial2.setRxBufferSize(4096);
   Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2);
   delay(500); // Даем UART стабилизироваться
 }
