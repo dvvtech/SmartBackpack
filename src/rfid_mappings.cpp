@@ -42,6 +42,16 @@ std::vector<RfidTagMapping> rfidMappingsList() {
   return mappings;
 }
 
+uint16_t rfidMappingSubjectIdForTag(const String& rfidTag) {
+  const String normalizedTag = normalizeRfidTag(rfidTag);
+  if (normalizedTag.length() == 0) return 0;
+
+  for (const RfidTagMapping& mapping : rfidMappingsList()) {
+    if (normalizeRfidTag(mapping.rfidTag) == normalizedTag) return mapping.subjectId;
+  }
+  return 0;
+}
+
 bool rfidMappingSave(uint16_t subjectId, const String& rfidTag) {
   const String normalizedTag = normalizeRfidTag(rfidTag);
   if (subjectId == 0 || normalizedTag.length() == 0) return false;

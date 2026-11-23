@@ -6,6 +6,7 @@
 
 #include "rfid_mappings.h"
 #include "rfid_scanner.h"
+#include "device_settings.h"
 #include "wifi_provisioning.h"
 
 namespace {
@@ -67,6 +68,13 @@ String buildTagMappingsMessage() {
 
 void sendTagMappings() {
   String message = buildTagMappingsMessage();
+  webSocket.sendTXT(message);
+}
+
+void sendDeviceClass(bool updated = false) {
+  const String className = deviceSettingsClass();
+  String message = "{\"type\":\"deviceClass\",\"className\":\"" + className +
+      "\",\"updated\":" + String(updated ? "true" : "false") + "}";
   webSocket.sendTXT(message);
 }
 
@@ -147,6 +155,7 @@ void onWebSocketEvent(WStype_t eventType, uint8_t* payload, size_t length) {
       Serial.printf("[WS] Connected to %s:%u\n", API_HOST, API_PORT);
       webSocket.sendTXT("{\"type\":\"deviceConnected\"}");
       sendTagMappings();
+      sendDeviceClass();
       Serial.println("[WS] RFID subject mappings sent to API.");
       break;
 
@@ -180,6 +189,19 @@ void onWebSocketEvent(WStype_t eventType, uint8_t* payload, size_t length) {
         webSocket.sendTXT("{\"type\":\"wifiResetStarted\"}");
         wifiProvisioningRequestSetup();
         Serial.println("[WS] Wi-Fi reset requested by the user.");
+      } else if (message.indexOf("\"type\":\"setClass\"") >= 0) {
+        String className;
+        const bool parsed = readJsonString(message, "className", className);
+        if (!parsed || !deviceSettingsIsValidClass(className)) {
+          webSocket.sendTXT("{\"type\":\"deviceClassUpdateFailed\",\"message\":\"Выберите класс 8А, 8Б или 8В.\"}");
+          break;
+        }
+        if (!deviceSettingsSetClass(className)) {
+          webSocket.sendTXT("{\"type\":\"deviceClassUpdateFailed\",\"message\":\"Не удалось сохранить класс в памяти устройства.\"}");
+          break;
+        }
+        sendDeviceClass(true);
+        Serial.printf("[WS] School class saved on device: %s\n", className.length() ? className.c_str() : "not set");
       } else if (message.indexOf("\"type\":\"deleteTagMapping\"") >= 0) {
         uint16_t subjectId = 0;
         if (!readSubjectId(message, subjectId)) {
@@ -215,13 +237,22 @@ void onWebSocketEvent(WStype_t eventType, uint8_t* payload, size_t length) {
         String rfidTag;
         const bool parsed = readSubjectId(message, subjectId) && readJsonString(message, "rfidTag", rfidTag);
         const bool isCandidate = parsed && subjectId == candidateTagSubjectId && rfidTag == candidateRfidTag;
-        const bool saved = isCandidate && rfidMappingSave(subjectId, rfidTag);
+        const uint16_t existingSubjectId = isCandidate ? rfidMappingSubjectIdForTag(rfidTag) : 0;
+        const bool alreadyBound = existingSubjectId != 0 && existingSubjectId != subjectId;
+        const bool saved = isCandidate && !alreadyBound && rfidMappingSave(subjectId, rfidTag);
         if (saved) {
+          candidateTagSubjectId = 0;
+          candidateRfidTag = "";
+        } else if (alreadyBound) {
           candidateTagSubjectId = 0;
           candidateRfidTag = "";
         }
         String response = "{\"type\":\"tagMappingSaved\",\"subjectId\":" + String(subjectId) +
-            ",\"success\":" + String(saved ? "true" : "false") + "}";
+            ",\"success\":" + String(saved ? "true" : "false");
+        if (alreadyBound) {
+          response += ",\"reason\":\"tagAlreadyBound\",\"existingSubjectId\":" + String(existingSubjectId);
+        }
+        response += "}";
         webSocket.sendTXT(response);
         if (saved) sendTagMappings();
         Serial.printf("[WS] RFID mapping save for subject %u: %s\n", subjectId, saved ? "saved" : "rejected");

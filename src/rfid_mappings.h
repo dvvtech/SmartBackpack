@@ -9,5 +9,6 @@ struct RfidTagMapping {
 };
 
 std::vector<RfidTagMapping> rfidMappingsList();
+uint16_t rfidMappingSubjectIdForTag(const String& rfidTag);
 bool rfidMappingSave(uint16_t subjectId, const String& rfidTag);
 bool rfidMappingRemove(uint16_t subjectId);
