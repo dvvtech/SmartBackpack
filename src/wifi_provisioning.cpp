@@ -17,6 +17,7 @@ constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
 constexpr int BOOT_BUTTON_PIN = 0;
 constexpr unsigned long PAIRING_RECOVERY_HOLD_MS = 3000;
 constexpr unsigned long PAIRING_RECOVERY_TIMEOUT_MS = 10UL * 60UL * 1000UL;
+constexpr int MAX_SCAN_RESULTS = 40;
 
 WebServer provisioningServer(80);
 bool provisioningMode = false;
@@ -86,6 +87,108 @@ bool connectToWiFi(const String& ssid, const String& password) {
                 connected ? "Connected" : "Connection failed",
                 static_cast<int>(WiFi.status()), WiFi.localIP().toString().c_str());
   return connected;
+}
+
+struct ScannedNetwork {
+  String ssid;
+  int rssi = 0;
+  uint8_t auth = 0;
+};
+
+void appendJsonEscaped(String& target, const String& value) {
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    switch (c) {
+      case '"': target += "\\\""; break;
+      case '\\': target += "\\\\"; break;
+      case '\n': target += "\\n"; break;
+      case '\r': target += "\\r"; break;
+      case '\t': target += "\\t"; break;
+      default:
+        if (static_cast<uint8_t>(c) < 0x20) {
+          char escaped[7];
+          snprintf(escaped, sizeof(escaped), "\\u%04x",
+                   static_cast<unsigned int>(static_cast<uint8_t>(c)));
+          target += escaped;
+        } else {
+          target += c;
+        }
+    }
+  }
+}
+
+void handleScanNetworks() {
+  Serial.printf("[HTTP] %s %s -> Wi-Fi scan\n",
+                httpMethodName(provisioningServer.method()), provisioningServer.uri().c_str());
+
+  ScannedNetwork networks[MAX_SCAN_RESULTS];
+  int networkCount = 0;
+
+  const int found = WiFi.scanNetworks(false, false);
+  Serial.printf("[WiFi] Scan finished; networks found: %d\n", found);
+
+  if (found > 0) {
+    for (int i = 0; i < found && networkCount < MAX_SCAN_RESULTS; ++i) {
+      const String ssid = WiFi.SSID(i);
+      if (ssid.length() == 0 || ssid == SETUP_AP_SSID) {
+        continue;
+      }
+
+      bool duplicate = false;
+      for (int j = 0; j < networkCount; ++j) {
+        if (networks[j].ssid == ssid) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (duplicate) {
+        continue;
+      }
+
+      networks[networkCount].ssid = ssid;
+      networks[networkCount].rssi = WiFi.RSSI(i);
+      networks[networkCount].auth = static_cast<uint8_t>(WiFi.encryptionType(i));
+      ++networkCount;
+    }
+  }
+  WiFi.scanDelete();
+
+  // Show the strongest networks first.
+  for (int i = 1; i < networkCount; ++i) {
+    const ScannedNetwork current = networks[i];
+    int j = i - 1;
+    while (j >= 0 && networks[j].rssi < current.rssi) {
+      networks[j + 1] = networks[j];
+      --j;
+    }
+    networks[j + 1] = current;
+  }
+
+  if (found < 0) {
+    provisioningServer.send(503, "application/json; charset=utf-8",
+                            "{\"error\":\"scan-failed\"}");
+    return;
+  }
+
+  String json;
+  json.reserve(24 + networkCount * 48);
+  json += "{\"networks\":[";
+  for (int i = 0; i < networkCount; ++i) {
+    if (i > 0) {
+      json += ',';
+    }
+    json += "{\"ssid\":\"";
+    appendJsonEscaped(json, networks[i].ssid);
+    json += "\",\"rssi\":";
+    json += networks[i].rssi;
+    json += ",\"auth\":";
+    json += static_cast<unsigned int>(networks[i].auth);
+    json += '}';
+  }
+  json += "]}";
+
+  provisioningServer.sendHeader("Cache-Control", "no-store");
+  provisioningServer.send(200, "application/json; charset=utf-8", json);
 }
 
 void handleSaveWiFi() {
@@ -175,7 +278,8 @@ bool connectToSavedWiFi() {
 }
 
 void startWiFiProvisioning() {
-  WiFi.mode(WIFI_AP);
+  // AP_STA keeps the setup access point up while the station interface scans for networks.
+  WiFi.mode(WIFI_AP_STA);
   if (!WiFi.softAP(SETUP_AP_SSID)) {
     Serial.println("Не удалось запустить точку доступа настройки.");
     return;
@@ -183,6 +287,7 @@ void startWiFiProvisioning() {
 
   provisioningMode = true;
   provisioningServer.on("/", HTTP_GET, handleProvisioningRoot);
+  provisioningServer.on("/scan", HTTP_GET, handleScanNetworks);
   provisioningServer.on("/save", HTTP_POST, handleSaveWiFi);
   provisioningServer.on("/favicon.ico", HTTP_GET, []() { provisioningServer.send(204); });
   provisioningServer.onNotFound(handleNotFound);
