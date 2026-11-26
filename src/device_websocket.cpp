@@ -149,6 +149,21 @@ void sendScheduleScanResult(const RfidTimedScanResult& result) {
                 static_cast<unsigned>(result.tags.size()));
 }
 
+void sendNewTags() {
+  const std::vector<String> tags = rfidScannerTakeNewTags();
+  for (const String& tag : tags) {
+    if (activeScheduleScan) {
+      // Отправляем каждую новую метку сразу, не дожидаясь конца 5-секундного скана.
+      webSocket.sendTXT("{\"type\":\"scheduleScanTag\",\"rfidTag\":\"" + tag + "\"}");
+      Serial.printf("[WS] Live schedule tag: %s\n", tag.c_str());
+    } else if (activeTagScanSubjectId != 0) {
+      webSocket.sendTXT("{\"type\":\"tagScanTag\",\"subjectId\":" + String(activeTagScanSubjectId) +
+                        ",\"rfidTag\":\"" + tag + "\"}");
+      Serial.printf("[WS] Live tag for subject %u: %s\n", activeTagScanSubjectId, tag.c_str());
+    }
+  }
+}
+
 void onWebSocketEvent(WStype_t eventType, uint8_t* payload, size_t length) {
   switch (eventType) {
     case WStype_CONNECTED:
@@ -299,6 +314,7 @@ void deviceWebSocketLoop() {
   }
 
   webSocket.loop();
+  sendNewTags();
   if (activeScheduleScan) {
     const RfidTimedScanResult result = rfidScannerTakeTimedScanResult();
     if (result.ready) sendScheduleScanResult(result);

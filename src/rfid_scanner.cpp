@@ -22,6 +22,7 @@ bool continuousInventoryActive = false;
 unsigned long timedScanStartedAt = 0;
 uint32_t timedScanDurationMs = 0;
 std::vector<String> timedScanTags;
+std::vector<String> newTags;
 unsigned long lastNoTagLogAt = 0;
 
 String bytesToHex(const byte* bytes, int length) {
@@ -73,6 +74,8 @@ void processPacket(const byte* pkt, int len) {
       if (timedScanTags.size() < MAX_CAPTURED_RFID_TAGS
           && std::find(timedScanTags.begin(), timedScanTags.end(), tag) == timedScanTags.end()) {
         timedScanTags.push_back(tag);
+        // Новую метку сразу отдаем наружу, чтобы отправить ее на фронт без ожидания конца скана.
+        newTags.push_back(tag);
       }
     }
   } else if (frameType == 0x01 && command == 0xFF && dataLen >= 1) {
@@ -143,6 +146,7 @@ void rfidScannerStopInventory() {
 bool rfidScannerStartTimedScan(uint32_t durationMs) {
   if (timedScanActive || durationMs == 0) return false;
   timedScanTags.clear();
+  newTags.clear();
   timedScanComplete = false;
   timedScanDurationMs = durationMs;
   timedScanStartedAt = millis();
@@ -155,4 +159,10 @@ RfidTimedScanResult rfidScannerTakeTimedScanResult() {
   if (!timedScanComplete) return {false, {}};
   timedScanComplete = false;
   return {true, timedScanTags};
+}
+
+std::vector<String> rfidScannerTakeNewTags() {
+  std::vector<String> tags;
+  tags.swap(newTags);
+  return tags;
 }

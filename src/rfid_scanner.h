@@ -15,3 +15,4 @@ void rfidScannerStartContinuousInventory();
 void rfidScannerStopInventory();
 bool rfidScannerStartTimedScan(uint32_t durationMs);
 RfidTimedScanResult rfidScannerTakeTimedScanResult();
+std::vector<String> rfidScannerTakeNewTags();
